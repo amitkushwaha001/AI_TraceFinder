@@ -108,7 +108,7 @@ if dataset_root and os.path.isdir(dataset_root):
             if os.path.exists(sample_path):
                 try:
                     img = Image.open(sample_path)
-                    cols[len(shown_classes) % 5].image(img, caption=cls_label, use_container_width=True)
+                    cols[len(shown_classes) % 5].image(img, caption=cls_label, width="stretch")
                     shown_classes.add(cls_label)
                 except:
                     st.warning(f"⚠️ Could not display sample image: {sample_path}")
@@ -132,4 +132,5 @@ if st.button("Predict"):
 if st.button("Evaluate"):
     result = subprocess.run([python_executable, "src/baseline/evaluate_baseline.py"], capture_output=True, text=True)
     st.text(result.stdout)
+
     st.error(result.stderr)
