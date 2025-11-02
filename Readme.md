@@ -103,17 +103,17 @@ The hybrid model effectively combines CNN-learned visual patterns with statistic
 - (Optional) GPU & CUDA if training on GPU
 - # Create and activate virtual environment (recommended)
 python -m venv .venv
-# Windows
+## Windows
 .venv\Scripts\activate
-# Install dependencies
+## Install dependencies
 pip install -r Requirements.txt
 We used a public scanner dataset (link / openmfc). You can either download manually or use the helper script below.
- # https://www.nist.gov/
- # Run the demo (Streamlit)
+ ## https://www.nist.gov/
+ ## Run the demo (Streamlit)
  **streamlit run streamlit_app.py**
- # then open http://localhost:8501
- # Evaluate using pre-trained model
- # Train the model from scratch
+ ## then open http://localhost:8501
+ ## Evaluate using pre-trained model
+ ## Train the model from scratch
 Maintainer: Amit Kumar  
 Email: amitkushwaha200215@gmail.com
 GitHub: https://github.com/amitkushwaha001/
