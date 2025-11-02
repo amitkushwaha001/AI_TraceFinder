@@ -110,7 +110,7 @@ pip install -r Requirements.txt
 We used a public scanner dataset (link / openmfc). You can either download manually or use the helper script below.
  # https://www.nist.gov/
  # Run the demo (Streamlit)
- streamlit run streamli_app.py
+ **streamlit run streamlit_app.py**
  # then open http://localhost:8501
  # Evaluate using pre-trained model
  # Train the model from scratch
