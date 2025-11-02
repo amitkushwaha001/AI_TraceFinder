@@ -64,8 +64,8 @@ The dataset consisted of:
 - **Test set:** 914 document scans  
 Each image was resized to **256×256 (grayscale)** and paired with **27 handcrafted features** across **11 scanner classes**.
 
-**Hybrid train : (3654, 256, 256, 1) (3654, 27) (3654, 11)
-Hybrid test : (914, 256, 256, 1) (914, 27) (914, 11)**
+**Hybrid train : (3654, 256, 256, 1) (3654, 27) (3654, 11)**
+**Hybrid test : (914, 256, 256, 1) (914, 27) (914, 11)**
 
 
 After 50 epochs of training, the hybrid model achieved an impressive **test accuracy of 93.65%**, proving effective across diverse scanner brands and image formats.  
