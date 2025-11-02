@@ -65,6 +65,7 @@ The dataset consisted of:
 Each image was resized to **256×256 (grayscale)** and paired with **27 handcrafted features** across **11 scanner classes**.
 
 **Hybrid train : (3654, 256, 256, 1) (3654, 27) (3654, 11)**
+
 **Hybrid test : (914, 256, 256, 1) (914, 27) (914, 11)**
 
 
