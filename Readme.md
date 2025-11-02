@@ -98,7 +98,7 @@ The hybrid model effectively combines CNN-learned visual patterns with statistic
 
 ---
 **Prerequisites**
-- Python 3.10  
+- Python 3.10.11 
 - pip install Requirement.txt file
 - (Optional) GPU & CUDA if training on GPU
 - # Create and activate virtual environment (recommended)
