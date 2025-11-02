@@ -56,10 +56,20 @@ Input ➜ Preprocessing ➜ Feature Extraction + Modeling ➜ Evaluation & Expla
 
 ---
 
-  ## Accuracy & Performance
-- **Hybrid CNN model test accuracy: 93.7% (on 914 test images, across 11 scanner classes).**
-- Per-class F1-score ranges: Canon/Epson/HP scanner models all reach between 0.90 and 0.99 F1-score, with every class above 0.83 precision/recall.
-- All dataset images are validated for corruption (none found in benchmarks), ensuring robust training.
+ ## 🎯 Accuracy & Performance  
+
+The **Hybrid CNN model** was trained using a mix of **image-based inputs** and **handcrafted statistical features**.  
+The dataset consisted of:  
+- **Training set:** 3,654 document scans  
+- **Test set:** 914 document scans  
+Each image was resized to **256×256 (grayscale)** and paired with **27 handcrafted features** across **11 scanner classes**.
+
+**Hybrid train : (3654, 256, 256, 1) (3654, 27) (3654, 11)
+Hybrid test : (914, 256, 256, 1) (914, 27) (914, 11)**
+
+
+After 50 epochs of training, the hybrid model achieved an impressive **test accuracy of 93.65%**, proving effective across diverse scanner brands and image formats.  
+All images were verified for data integrity before model training — no corrupted files were detected.
 
 | Scanner Model   | Precision | Recall | F1-score | Support |
 |-----------------|-----------|--------|----------|---------|
@@ -74,13 +84,38 @@ Input ➜ Preprocessing ➜ Feature Extraction + Modeling ➜ Evaluation & Expla
 | EpsonV39-2      | 0.96      | 0.95   | 0.96     | 84      |
 | EpsonV550       | 1.00      | 0.99   | 0.99     | 83      |
 | HP              | 0.99      | 1.00   | 0.99     | 83      |
-**Overall weighted avg:** Precision 0.94, Recall 0.94, F1-score 0.94 (Test set: 914 images).
+
+**Overall Weighted Performance:**  
+- **Precision:** 0.94  
+- **Recall:** 0.94  
+- **F1-score:** 0.94  
+- **Test Accuracy:** 93.65%  
+
+🧠 *Insight:*  
+The hybrid model effectively combines CNN-learned visual patterns with statistical handcrafted features, enabling precise scanner identification even among closely related device models.
+**<img width="964" height="745" alt="image" src="https://github.com/user-attachments/assets/fbca0f9f-3f0f-4f5e-9c68-f0ce2e48a166" />**
+
 ---
-## Getting Started  
-- Upload a scanned image.  
-- The app auto-processes and predicts the **scanner model** with a confidence score.  
-- Feature region visualizations available for forensic expert review.
-- ## Results Interpretation  
-- Precise, interpretable results for legal and forensic use — every image analyzed for artifact fingerprinting, model shows detailed classification evidence.
-- **Accuracy (test): 93.7%**, supporting robust forensic validation in scanned documents.
+**Prerequisites**
+- Python 3.10  
+- pip install Requirement.txt file
+- (Optional) GPU & CUDA if training on GPU
+- # Create and activate virtual environment (recommended)
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+# Install dependencies
+pip install -r Requirements.txt
+We used a public scanner dataset (link / openmfc). You can either download manually or use the helper script below.
+ # https://www.nist.gov/
+ # Run the demo (Streamlit)
+ streamlit run streamli_app.py
+ # then open http://localhost:8501
+ # Evaluate using pre-trained model
+ # Train the model from scratch
+Maintainer: Amit Kumar  
+Email: amitkushwaha200215@gmail.com
+GitHub: https://github.com/amitkushwaha001/
+
+
 
