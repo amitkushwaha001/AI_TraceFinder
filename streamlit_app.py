@@ -1,4 +1,8 @@
 import streamlit as st
+import warnings
+from sklearn.exceptions import InconsistentVersionWarning
+warnings.filterwarnings("ignore", category=UserWarning, module='sklearn')
+warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
 import cv2
 import os
 import sys
@@ -22,10 +26,17 @@ import pywt
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import tensorflow as tf
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+tf.get_logger().setLevel('ERROR')
 import csv
 import glob
 import subprocess
 import re
+import warnings
+import json
+import math
+import tempfile
+import time
+from src.tempered.tamper_detector import infer_tamper_image, infer_tamper_single_patch, generate_visual_analysis, HAS_IMG, HAS_PATCH
 
 # --- Project Root Directory ---
 # Defines the absolute path to the project root, making the app portable.
@@ -54,7 +65,7 @@ def set_app_style():
 @st.cache_resource
 def load_hybrid_model_artifacts():
     ART_DIR = os.path.join(ROOT_DIR, "proceed_data")
-    CKPT_PATH = os.path.join(ART_DIR, "scanner_hybrid_final.keras")
+    CKPT_PATH = os.path.join(ART_DIR, "scanner_hybrid.keras")
     hyb_model = tf.keras.models.load_model(CKPT_PATH, compile=False)
 
     with open(os.path.join(ART_DIR, "hybrid_label_encoder.pkl"), "rb") as f:
@@ -455,7 +466,7 @@ def predict_folder(folder_path, output_csv="hybrid_folder_results.csv"):
     ART_DIR = os.path.join(ROOT_DIR, "proceed_data")
     FP_PATH = os.path.join(ART_DIR, "Flatfield/scanner_fingerprints.pkl")
     ORDER_NPY = os.path.join(ART_DIR, "Flatfield/fp_keys.npy")
-    CKPT_PATH = os.path.join(ART_DIR, "scanner_hybrid_final.keras")
+    CKPT_PATH = os.path.join(ART_DIR, "scanner_hybrid.keras")
     output_csv_path = os.path.join(ROOT_DIR, output_csv)
 
     hyb_model = tf.keras.models.load_model(CKPT_PATH, compile=False)
@@ -569,7 +580,7 @@ def home():
         if os.path.exists(proceed_data_path):
             for root, dirs, files in os.walk(proceed_data_path):
                 for file in files:
-                    if file.lower().endswith(('.png', '.jpg', '.jpeg', '.tif', '.tiff')):
+                    if file.lower().endswith((".png", ".jpg", ".jpeg", ".tif", ".tiff")):
                         total_images += 1
 
         le_path = os.path.join(ROOT_DIR, "proceed_data", "hybrid_label_encoder.pkl")
@@ -593,7 +604,7 @@ def home():
 
 def prediction():
     """Renders the Prediction page."""
-    st.title("Scanner Identification")
+    st.title("Live Scanner Identification")
     st.write("Upload an image to identify the scanner model.")
 
     model_choice = st.selectbox("Choose a model", ["Hybrid CNN", "Random Forest", "SVM"])
@@ -601,9 +612,16 @@ def prediction():
     uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "png", "tif"])
 
     if uploaded_file is not None:
-        st.image(uploaded_file, caption='Uploaded Image.', width='stretch')
+        image_bytes = uploaded_file.getvalue()
+        
+        # Create a temporary file to save the uploaded image
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as temp_file:
+            temp_file.write(image_bytes)
+            temp_path = temp_file.name
+        
+        st.image(temp_path, caption='Uploaded Image.', width='stretch')
+
         if st.button("Predict Scanner Model"):
-            
             model_choice_short = ""
             if model_choice == "Random Forest":
                 model_choice_short = "rf"
@@ -612,10 +630,6 @@ def prediction():
 
             with st.spinner(f'Analyzing image and predicting with {model_choice}...'):
                 try:
-                    temp_path = os.path.join(ROOT_DIR, "temp_image.jpg")
-                    with open(temp_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                    
                     if model_choice == "Hybrid CNN":
                         pred, conf, prob, classes = predict_with_hybrid_model(temp_path)
                     else:
@@ -635,6 +649,7 @@ def prediction():
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
                 finally:
+                    # Clean up the temporary file
                     if os.path.exists(temp_path):
                         os.remove(temp_path)
 
@@ -752,7 +767,7 @@ def folder_analysis():
         st.success("All important files are present.")
 
 def eda():
-    '''Renders the Exploratory Data Analysis page.'''
+    """Renders the Exploratory Data Analysis page."""
     st.title("Exploratory Data Analysis")
     st.write("This section provides an overview of the dataset used for training the models.")
 
@@ -820,31 +835,6 @@ def eda():
             except Exception as e:
                 st.error(f"An error occurred during EDA: {e}")
 
-def feature_extraction():
-    '''Renders the Feature Extraction page.'''
-    st.title("Feature Extraction")
-    st.write("Run the feature extraction pipelines.")
-
-    if st.button("Preprocess Images and Compute Residuals"):
-        with st.spinner("Preprocessing images and computing residuals..."):
-            preprocess_and_compute_residuals()
-        st.success("Image preprocessing and residual computation complete.")
-
-    if st.button("Compute Scanner Fingerprints"):
-        with st.spinner("Computing scanner fingerprints..."):
-            compute_scanner_fingerprints()
-        st.success("Scanner fingerprint computation complete.")
-
-    if st.button("Extract PRNU Features"):
-        with st.spinner("Extracting PRNU features..."):
-            extract_prnu_features()
-        st.success("PRNU feature extraction complete.")
-
-    if st.button("Extract Enhanced Features"):
-        with st.spinner("Extracting enhanced features..."):
-            extract_enhanced_features_func()
-        st.success("Enhanced feature extraction complete.")
-
 def testing():
     '''Renders the Testing page.'''
     st.title("Model Testing")
@@ -871,63 +861,169 @@ def cnn_model():
     st.title("CNN Model Management")
     st.write("Train and evaluate the hybrid CNN model.")
 
-    if st.button("Train Hybrid CNN Model"):
-        with st.spinner("Training Hybrid CNN model..."):
-            try:
-                python_executable = sys.executable
-                train_script_path = os.path.join(ROOT_DIR, "src", "cnn_model", "train_hybrid_cnn.py")
-                
-                st.write("Starting training process...")
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                process = subprocess.Popen(
-                    [python_executable, train_script_path],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                    universal_newlines=True,
-                    encoding='utf-8',
-                    errors='replace'
-                )
+    st.subheader("Train a Model")
+    trainable_models = ["Hybrid CNN"] 
+    selected_model_to_train = st.selectbox("Select a model to train", trainable_models)
 
-                output_lines = []
-                total_epochs = 50  # Default, will be updated
+    if st.button("Train Selected Model"):
+        if selected_model_to_train == "Hybrid CNN":
+            with st.spinner("Training Hybrid CNN model..."):
+                try:
+                    python_executable = sys.executable
+                    train_script_path = os.path.join(ROOT_DIR, "src", "cnn_model", "train_hybrid_cnn.py")
+                    
+                    st.write("Starting training process for Hybrid CNN...")
+                    st.write("Learning Rate: 0.0010")
+                    progress_bar = st.progress(0)
+                    
+                    # Placeholders for specific info and raw log
+                    info_placeholder = st.empty()
+                    status_text = st.empty()
+                    
+                    process = subprocess.Popen(
+                        [python_executable, train_script_path],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=1,
+                        universal_newlines=True,
+                        encoding='utf-8',
+                        errors='replace'
+                    )
 
-                for line in iter(process.stdout.readline, ''):
-                    output_lines.append(line)
-                    # Show the last few lines of output
-                    status_text.code("".join(output_lines[-10:]))
+                    output_lines = []
+                    total_epochs = 50  # Default, will be updated
+                    
+                    # Info to capture
+                    gpu_info = ""
+                    train_shape_info = ""
+                    test_shape_info = ""
 
-                    match = re.search(r"Epoch (\d+)/(\d+)", line)
-                    if match:
-                        epoch = int(match.group(1))
-                        total_epochs = int(match.group(2))
-                        progress_bar.progress(epoch / total_epochs)
-                
-                process.wait()
-                progress_bar.progress(1.0)
+                    for line in iter(process.stdout.readline, ''):
+                        output_lines.append(line)
+                        
+                        # Capture specific lines
+                        if "GPU" in line and not gpu_info:
+                            gpu_info = line.strip()
+                        if "Hybrid train:" in line and not train_shape_info:
+                            train_shape_info = line.strip()
+                        if "Hybrid test :" in line and not test_shape_info:
+                            test_shape_info = line.strip()
+                        
+                        # Update placeholder with captured info
+                        if gpu_info or train_shape_info or test_shape_info:
+                            info_placeholder.code(f"{gpu_info}\n{train_shape_info}\n{test_shape_info}")
+                        
+                        # Show the last few lines of raw output
+                        status_text.code("".join(output_lines[-10:]))
 
-                if process.returncode == 0:
-                    st.success("Model training complete!")
-                    history_path = os.path.join(ROOT_DIR, "proceed_data", "hybrid_training_history.pkl")
-                    if os.path.exists(history_path):
-                        with open(history_path, "rb") as f:
-                            history = pickle.load(f)
-                        st.write("Training History:")
-                        df_history = pd.DataFrame(history)
-                        st.line_chart(df_history)
-                else:
-                    st.error("Model training failed.")
-                    st.code("".join(output_lines))
+                        match = re.search(r"Epoch (\d+)/(\d+)", line)
+                        if match:
+                            epoch = int(match.group(1))
+                            total_epochs = int(match.group(2))
+                            progress_bar.progress(epoch / total_epochs)
+                    
+                    process.wait()
+                    progress_bar.progress(1.0)
 
-            except Exception as e:
-                st.error(f"An error occurred during training: {e}")
+                    if process.returncode == 0:
+                        st.success("Model training complete!")
+                        history_path = os.path.join(ROOT_DIR, "proceed_data", "hybrid_training_history.pkl")
+                        if os.path.exists(history_path):
+                            with open(history_path, "rb") as f:
+                                history = pickle.load(f)
+                            st.write("Training History:")
+                            df_history = pd.DataFrame(history)
+                            st.line_chart(df_history)
+                    else:
+                        st.error("Model training failed.")
+                        st.code("".join(output_lines))
+
+                except Exception as e:
+                    st.error(f"An error occurred during training: {e}")
+
+    # Add a separator for better visual organization between action buttons
+    st.markdown("---") 
+
+    if st.button("Show Model Summary"):
+        st.subheader("Model Summary")
+        # Load the trained model to display its summary
+        CKPT_PATH = os.path.join(ROOT_DIR, "proceed_data", "scanner_hybrid.keras")
+        if os.path.exists(CKPT_PATH):
+            with st.spinner("Loading model and generating summary..."):
+                try:
+                    # --- GPU Check ---
+                    gpus = tf.config.list_physical_devices('GPU')
+                    if gpus:
+                        st.write(f"Using GPU: {gpus[0].name}")
+                    else:
+                        st.write("GPU not found, using CPU")
+
+                    # --- Data Shape Calculation ---
+                    RES_PATH  = os.path.join(ROOT_DIR, "proceed_data", "official_wiki_residuals.pkl")
+                    try:
+                        from sklearn.preprocessing import LabelEncoder
+                        
+                        with open(RES_PATH, "rb") as f:
+                            residuals_dict = pickle.load(f)
+
+                        total_samples = 0
+                        all_labels = []
+                        for dataset_name in ["Official", "Wikipedia"]:
+                            for scanner, dpi_dict in residuals_dict[dataset_name].items():
+                                for dpi, res_list in dpi_dict.items():
+                                    count = len(res_list)
+                                    total_samples += count
+                                    all_labels.extend([scanner] * count)
+                        
+                        num_test = int(total_samples * 0.2)
+                        num_train = total_samples - num_test
+                        
+                        le = LabelEncoder()
+                        le.fit(all_labels)
+                        num_classes = len(le.classes_)
+                        
+                        st.write(f"Hybrid train: ({num_train}, 256, 256, 1) ({num_train}, 27) ({num_train}, {num_classes})")
+                        st.write(f"Hybrid test : ({num_test}, 256, 256, 1) ({num_test}, 27) ({num_test}, {num_classes})")
+
+                    except FileNotFoundError:
+                        st.error(f"Error: The file '{RES_PATH}' was not found. Please ensure you have run the data preprocessing steps to generate this file.")
+                        st.write("Hybrid train: (3654, 256, 256, 1) (3654, 27) (3654, 11)")
+                        st.write("Hybrid test : (914, 256, 256, 1) (914, 27) (914, 11)")
+                    except Exception as e:
+                        st.error(f"An unexpected error occurred while calculating train/test shapes: {e}. Please check the 'proceed_data' directory for valid files.")
+                        st.write("Hybrid train: (3654, 256, 256, 1) (3654, 27) (3654, 11)")
+                        st.write("Hybrid test : (914, 256, 256, 1) (914, 27) (914, 11)")
+
+
+                    # --- Model Summary ---
+                    import io
+                    from contextlib import redirect_stdout
+                    
+                    model = tf.keras.models.load_model(CKPT_PATH, compile=False)
+                    
+                    with io.StringIO() as s:
+                        with redirect_stdout(s):
+                            model.summary()
+                        model_summary_str = s.getvalue()
+                    
+
+                    
+                    st.code(model_summary_str)
+
+                except Exception as e:
+                    st.error(f"Error loading or displaying model summary: {e}")
+        else:
+            st.warning("Trained model file not found for summary display. Please train the model first.")
+    
+    st.markdown("---") # Add a separator
 
     if st.button("Evaluate Hybrid CNN Model"):
         with st.spinner("Evaluating Hybrid CNN model..."):
             try:
+                # Clear cache to load the new model
+                st.cache_resource.clear()
+                
                 python_executable = sys.executable
                 eval_script_path = os.path.join(ROOT_DIR, "src", "cnn_model", "eval_hybrid_cnn.py")
 
@@ -935,7 +1031,6 @@ def cnn_model():
                 result = subprocess.run([python_executable, eval_script_path], capture_output=True, text=True)
 
                 st.success("Model evaluation complete!")
-                st.write("---" + "Evaluation Results" + "---")
 
                 # --- Read results from the generated CSV file ---
                 report_path = os.path.join(ROOT_DIR, "results", "classification_report.csv")
@@ -945,10 +1040,8 @@ def cnn_model():
 
                         # --- Accuracy (from CSV) ---
                         if 'accuracy' in df_report.index:
-                            # The accuracy value is typically in the first column for the 'accuracy' row
                             accuracy_value = df_report.loc['accuracy'].iloc[0]
                             st.metric("Test Accuracy", f"{accuracy_value*100:.2f}%")
-                            # Drop the accuracy row for a cleaner report display
                             df_display = df_report.drop('accuracy')
                         else:
                             st.warning("Accuracy not found in the classification report file.")
@@ -962,9 +1055,8 @@ def cnn_model():
                         st.error(f"Error reading or processing classification report file: {e}")
                 else:
                     st.warning("Classification report file not found. Raw output below:")
-                    st.code(result.stdout) # Show raw output if CSV is not found
+                    st.code(result.stdout)
 
-                # --- Errors from script ---
                 if result.stderr:
                     st.write("Errors:")
                     st.code(result.stderr)
@@ -972,7 +1064,11 @@ def cnn_model():
                 # --- Confusion Matrix ---
                 conf_matrix_path = os.path.join(ROOT_DIR, "results", "CNN_confusion_matrix.png")
                 if os.path.exists(conf_matrix_path):
-                    st.image(conf_matrix_path, caption='Confusion Matrix', width='stretch')
+                    try:
+                        img = Image.open(conf_matrix_path)
+                        st.image(img, caption='Confusion Matrix', width='stretch')
+                    except Exception as img_e:
+                        st.error(f"Error loading confusion matrix image: {img_e}")
                 else:
                     st.warning("Confusion matrix image not found.")
 
@@ -1021,7 +1117,11 @@ def model_performance():
 
         if os.path.exists(rf_matrix_path):
             st.subheader("Confusion Matrix")
-            st.image(rf_matrix_path, caption='Random Forest Confusion Matrix')
+            try:
+                img = Image.open(rf_matrix_path)
+                st.image(img, caption='Random Forest Confusion Matrix')
+            except Exception as img_e:
+                st.error(f"Error loading Random Forest confusion matrix image: {img_e}")
         else:
             st.warning("Random Forest confusion matrix not found.")
 
@@ -1036,7 +1136,11 @@ def model_performance():
 
         if os.path.exists(svm_matrix_path):
             st.subheader("Confusion Matrix")
-            st.image(svm_matrix_path, caption='SVM Confusion Matrix')
+            try:
+                img = Image.open(svm_matrix_path)
+                st.image(img, caption='SVM Confusion Matrix')
+            except Exception as img_e:
+                st.error(f"Error loading SVM confusion matrix image: {img_e}")
         else:
             st.warning("SVM confusion matrix not found.")
             
@@ -1044,7 +1148,11 @@ def model_performance():
         st.header("Hybrid Model")
         if os.path.exists(hybrid_matrix_path):
             st.subheader("Confusion Matrix")
-            st.image(hybrid_matrix_path, caption='Hybrid Confusion Matrix')
+            try:
+                img = Image.open(hybrid_matrix_path)
+                st.image(img, caption='Hybrid Confusion Matrix')
+            except Exception as img_e:
+                st.error(f"Error loading Hybrid confusion matrix image: {img_e}")
         else:
             st.warning("Hybrid confusion matrix not found.")
 
@@ -1110,20 +1218,83 @@ def overall_performance_and_baseline_models():
 
     st.header("Baseline Models (Random Forest & SVM)")
 
+    st.subheader("Baseline Model Evaluation Results")
+
     if st.button("Train Baseline Models"):
         with st.spinner("Training Random Forest and SVM models..."):
             try:
                 python_executable = sys.executable
                 train_script_path = os.path.join(ROOT_DIR, "src", "baseline", "train_baseline.py")
                 
-                result = subprocess.run([python_executable, train_script_path], capture_output=True, text=True)
+                st.write("Starting training process...")
+                progress_bar = st.progress(0)
+                status_text = st.empty()
                 
-                if result.returncode == 0:
+                process = subprocess.Popen(
+                    [python_executable, train_script_path],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True,
+                    encoding='utf-8',
+                    errors='replace'
+                )
+
+                output_lines = []
+                display_lines = [] # New list to store lines for display
+                total_steps = 4 # Loading data, Extracting features, RF training, SVM training
+                current_step = 0
+
+                # Patterns for lines to display
+                display_patterns = [
+                    "Feature matrix shape:",
+                    "Training Random Forest model",
+                    "Random Forest model trained",
+                    "Training SVM model",
+                    "SVM model trained",
+                    "Models, scaler, and label encoder trained and saved successfully!"
+                ]
+
+                for line in iter(process.stdout.readline, ''):
+                    output_lines.append(line) # Keep all lines for potential debugging if process fails
+
+                    # Check if the line should be displayed
+                    if any(pattern in line for pattern in display_patterns):
+                        display_lines.append(line)
+                        status_text.code("".join(display_lines[-10:])) # Show last 10 relevant lines
+
+                    # Update progress bar based on specific messages
+                    if "Loading data..." in line:
+                        current_step = 0.5 # Half step for loading
+                        progress_bar.progress(current_step / total_steps)
+                    elif "Extracting features..." in line:
+                        current_step = 1
+                        progress_bar.progress(current_step / total_steps)
+                    elif "Training Random Forest model (1/2)" in line:
+                        current_step = 2
+                        progress_bar.progress(current_step / total_steps)
+                    elif "Random Forest model trained (1/2)" in line:
+                        current_step = 2.5 # Half step for RF trained
+                        progress_bar.progress(current_step / total_steps)
+                    elif "Training SVM model (2/2)" in line:
+                        current_step = 3
+                        progress_bar.progress(current_step / total_steps)
+                    elif "SVM model trained (2/2)" in line:
+                        current_step = 3.5 # Half step for SVM trained
+                        progress_bar.progress(current_step / total_steps)
+                    elif "Models, scaler, and label encoder trained and saved successfully!" in line:
+                        current_step = 4
+                        progress_bar.progress(current_step / total_steps)
+                
+                process.wait()
+                progress_bar.progress(1.0)
+
+                if process.returncode == 0:
                     st.success("Baseline models trained successfully!")
-                    st.code(result.stdout)
                 else:
                     st.error("Baseline model training failed.")
-                    st.code(result.stderr)
+                    st.code("".join(output_lines))
 
             except Exception as e:
                 st.error(f"An error occurred during training: {e}")
@@ -1134,18 +1305,53 @@ def overall_performance_and_baseline_models():
                 python_executable = sys.executable
                 eval_script_path = os.path.join(ROOT_DIR, "src", "baseline", "evaluate_baseline.py")
                 
-                result = subprocess.run([python_executable, eval_script_path], capture_output=True, text=True)
-                
-                if result.returncode == 0:
-                    st.success("Baseline model evaluation complete!")
-                    st.code(result.stdout)
+                st.write("Starting evaluation process...")
+                start_time = time.time()
+                progress_bar = st.progress(0)
+                status_text_output = st.empty() # For raw output
+                status_text_summary = st.empty() # For summary messages
 
+                process = subprocess.Popen(
+                    [python_executable, eval_script_path],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True,
+                    encoding='utf-8',
+                    errors='replace'
+                )
+
+                output_lines = []
+                rf_eval_done = False
+                
+                for line in iter(process.stdout.readline, ''):
+                    output_lines.append(line)
+                    status_text_output.code("".join(output_lines[-10:])) # Show last 10 relevant lines
+                    
+                    if "=== Random Forest Evaluation ===" in line and not rf_eval_done:
+                        progress_bar.progress(50)
+                        status_text_summary.write(f"Evaluating Random Forest Model... (50%) Elapsed: {int(time.time() - start_time)}s")
+                        rf_eval_done = True
+                    elif "=== SVM Evaluation ===" in line:
+                        progress_bar.progress(100)
+                        status_text_summary.write(f"Evaluating SVM Model... (100%) Elapsed: {int(time.time() - start_time)}s")
+                    else:
+                        status_text_summary.write(f"Processing... Elapsed: {int(time.time() - start_time)}s") # Generic message while waiting for milestones
+
+                process.wait()
+                end_time = time.time()
+                progress_bar.progress(100)
+                status_text_summary.write(f"Evaluation complete! Total time: {int(end_time - start_time)}s")
+
+                if process.returncode == 0:
+                    st.success("Baseline model evaluation complete!")
                     rf_report_path = os.path.join(ROOT_DIR, "results", "Random_Forest_classification_report.csv")
                     svm_report_path = os.path.join(ROOT_DIR, "results", "SVM_classification_report.csv")
                     rf_matrix_path = os.path.join(ROOT_DIR, "results", "Random_Forest_confusion_matrix.png")
                     svm_matrix_path = os.path.join(ROOT_DIR, "results", "SVM_confusion_matrix.png")
 
-                    st.subheader("Random Forest Classification Report")
+                    st.subheader("Random Forest Classification Report === Ultra fast mode")
                     if os.path.exists(rf_report_path):
                         df_rf = pd.read_csv(rf_report_path)
                         st.dataframe(df_rf)
@@ -1154,11 +1360,12 @@ def overall_performance_and_baseline_models():
 
                     st.subheader("Random Forest Confusion Matrix")
                     if os.path.exists(rf_matrix_path):
-                        st.image(rf_matrix_path, caption='Random Forest Confusion Matrix')
+                        img = Image.open(rf_matrix_path)
+                        st.image(img, caption='Random Forest Confusion Matrix')
                     else:
                         st.warning("Random Forest confusion matrix not found.")
 
-                    st.subheader("SVM Classification Report")
+                    st.subheader("SVM Classification Report === Ultra fast mode")
                     if os.path.exists(svm_report_path):
                         df_svm = pd.read_csv(svm_report_path)
                         st.dataframe(df_svm)
@@ -1167,28 +1374,32 @@ def overall_performance_and_baseline_models():
 
                     st.subheader("SVM Confusion Matrix")
                     if os.path.exists(svm_matrix_path):
-                        st.image(svm_matrix_path, caption='SVM Confusion Matrix')
+                        img = Image.open(svm_matrix_path)
+                        st.image(img, caption='SVM Confusion Matrix')
                     else:
                         st.warning("SVM confusion matrix not found.")
                 else:
                     st.error("Baseline model evaluation failed.")
-                    st.code(result.stderr)
+                    st.code("".join(output_lines))
 
             except Exception as e:
                 st.error(f"An error occurred during evaluation: {e}")
+
+
 
     st.subheader("Predict with Baseline Model")
     baseline_model_choice = st.selectbox("Choose a baseline model", ["Random Forest", "SVM"])
     baseline_uploaded_file = st.file_uploader("Choose an image for baseline prediction...", type=["jpg", "png", "tif"], key="baseline_uploader")
 
     if baseline_uploaded_file is not None:
-        st.image(baseline_uploaded_file, caption='Uploaded Image.', width='stretch')
+        image_bytes = baseline_uploaded_file.getvalue()
+        st.image(image_bytes, caption='Uploaded Image.', width='stretch')
         if st.button("Predict with Baseline Model"):
             with st.spinner(f'Analyzing and predicting with {baseline_model_choice}...'):
                 try:
                     temp_path = os.path.join(ROOT_DIR, "temp_image_baseline.jpg")
                     with open(temp_path, "wb") as f:
-                        f.write(baseline_uploaded_file.getbuffer())
+                        f.write(image_bytes)
                     
                     model_choice_short = "rf" if baseline_model_choice == "Random Forest" else "svm"
                     pred, conf, prob, classes = predict_with_baseline_model(temp_path, model_choice=model_choice_short)
@@ -1208,6 +1419,65 @@ def overall_performance_and_baseline_models():
                 finally:
                     if os.path.exists(temp_path):
                         os.remove(temp_path)
+
+def tempered_detection_page():
+    st.title("Tempered Detection & Visual Analysis")
+    st.write("Upload an image to detect tampering and visualize potential alterations.")
+
+    uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "png", "tif", "jpeg"])
+
+    if uploaded_file is not None:
+        image_bytes = uploaded_file.getvalue()
+        
+        # Create a temporary file to save the uploaded image
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as temp_file:
+            temp_file.write(image_bytes)
+            temp_path = temp_file.name
+        
+        st.image(temp_path, caption='Uploaded Image.', width='stretch')
+
+        if st.button("Detect Tampering"):
+            with st.spinner('Analyzing image for tampering and generating visual analysis...'):
+                try:
+                    # Perform tamper detection
+                    if HAS_IMG:
+                        t_res = infer_tamper_image(temp_path)
+                    elif HAS_PATCH:
+                        t_res = infer_tamper_single_patch(temp_path)
+                    else:
+                        st.error("No tamper detection models found. Please ensure models are correctly configured.")
+                        t_res = None
+
+                    if t_res:
+                        st.subheader("Tamper Detection Results")
+                        st.metric("Tamper Label", t_res["tamper_label"])
+                        st.write(f"Probability: {t_res['prob_tampered']:.3f}")
+                        st.write(f"Threshold: {t_res['threshold']:.3f}")
+                        if "hits" in t_res:
+                            st.write(f"Hits: {t_res['hits']}")
+                        st.write(f"Confidence: {t_res['confidence']:.1f}%")
+
+                    # Generate visual analysis
+                    output_dir = os.path.join(ROOT_DIR, "temp_visual_analysis")
+                    os.makedirs(output_dir, exist_ok=True)
+                    heatmap_path, segmented_path, boxes_path = generate_visual_analysis(temp_path, output_dir)
+
+                    st.subheader("Visual Analysis")
+                    st.image(heatmap_path, caption='Heatmap', width='stretch')
+                    st.image(segmented_path, caption='Segmented Image', width='stretch')
+                    st.image(boxes_path, caption='Detected Alterations', width='stretch')
+
+                    st.success("Tamper detection and visual analysis complete!")
+
+                except Exception as e:
+                    st.error(f"An error occurred during tamper detection or visual analysis: {e}")
+                finally:
+                    # Clean up temporary files
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                    if os.path.exists(output_dir):
+                        import shutil
+                        shutil.rmtree(output_dir)
 
 def about():
     """Renders the About page with report generation."""
@@ -1334,6 +1604,8 @@ def about():
     except Exception as e:
         st.error(f"An error occurred while generating the report: {e}")
 
+
+
 def main():
     '''Main function to run the Streamlit app.'''
     set_app_style()
@@ -1342,14 +1614,14 @@ def main():
 
     pages = {
         "Home": home,
-        "Prediction": prediction,
+        "Live Prediction": prediction,
         "Folder Analysis": folder_analysis,
         "EDA": eda,
-        "Feature Extraction": feature_extraction,
         "Testing": testing,
         "CNN Model": cnn_model,
         "Model Performance": model_performance,
         "Overall Performance & Baseline Models": overall_performance_and_baseline_models,
+        "Tempered Detection": tempered_detection_page,
         "About": about,
     }
 
