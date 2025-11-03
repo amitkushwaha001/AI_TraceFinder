@@ -861,86 +861,60 @@ def cnn_model():
     st.title("CNN Model Management")
     st.write("Train and evaluate the hybrid CNN model.")
 
-    st.subheader("Train a Model")
-    trainable_models = ["Hybrid CNN"] 
-    selected_model_to_train = st.selectbox("Select a model to train", trainable_models)
+    if st.button("Train Hybrid CNN Model"):
+        with st.spinner("Training Hybrid CNN model..."):
+            try:
+                python_executable = sys.executable
+                train_script_path = os.path.join(ROOT_DIR, "src", "cnn_model", "train_hybrid_cnn.py")
+                
+                st.write("Starting training process...")
+                st.write("Learning Rate: 0.0010")
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                process = subprocess.Popen(
+                    [python_executable, train_script_path],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True,
+                    encoding='utf-8',
+                    errors='replace'
+                )
 
-    if st.button("Train Selected Model"):
-        if selected_model_to_train == "Hybrid CNN":
-            with st.spinner("Training Hybrid CNN model..."):
-                try:
-                    python_executable = sys.executable
-                    train_script_path = os.path.join(ROOT_DIR, "src", "cnn_model", "train_hybrid_cnn.py")
-                    
-                    st.write("Starting training process for Hybrid CNN...")
-                    st.write("Learning Rate: 0.0010")
-                    progress_bar = st.progress(0)
-                    
-                    # Placeholders for specific info and raw log
-                    info_placeholder = st.empty()
-                    status_text = st.empty()
-                    
-                    process = subprocess.Popen(
-                        [python_executable, train_script_path],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=1,
-                        universal_newlines=True,
-                        encoding='utf-8',
-                        errors='replace'
-                    )
+                output_lines = []
+                total_epochs = 50  # Default, will be updated
 
-                    output_lines = []
-                    total_epochs = 50  # Default, will be updated
-                    
-                    # Info to capture
-                    gpu_info = ""
-                    train_shape_info = ""
-                    test_shape_info = ""
+                for line in iter(process.stdout.readline, ''):
+                    output_lines.append(line)
+                    # Show the last few lines of output
+                    status_text.code("".join(output_lines[-10:]))
 
-                    for line in iter(process.stdout.readline, ''):
-                        output_lines.append(line)
-                        
-                        # Capture specific lines
-                        if "GPU" in line and not gpu_info:
-                            gpu_info = line.strip()
-                        if "Hybrid train:" in line and not train_shape_info:
-                            train_shape_info = line.strip()
-                        if "Hybrid test :" in line and not test_shape_info:
-                            test_shape_info = line.strip()
-                        
-                        # Update placeholder with captured info
-                        if gpu_info or train_shape_info or test_shape_info:
-                            info_placeholder.code(f"{gpu_info}\n{train_shape_info}\n{test_shape_info}")
-                        
-                        # Show the last few lines of raw output
-                        status_text.code("".join(output_lines[-10:]))
+                    match = re.search(r"Epoch (\d+)/(\d+)", line)
+                    if match:
+                        epoch = int(match.group(1))
+                        total_epochs = int(match.group(2))
+                        progress_bar.progress(epoch / total_epochs)
+                
+                process.wait()
+                progress_bar.progress(1.0)
 
-                        match = re.search(r"Epoch (\d+)/(\d+)", line)
-                        if match:
-                            epoch = int(match.group(1))
-                            total_epochs = int(match.group(2))
-                            progress_bar.progress(epoch / total_epochs)
-                    
-                    process.wait()
-                    progress_bar.progress(1.0)
+                if process.returncode == 0:
+                    st.success("Model training complete!")
+                    history_path = os.path.join(ROOT_DIR, "proceed_data", "hybrid_training_history.pkl")
+                    if os.path.exists(history_path):
+                        with open(history_path, "rb") as f:
+                            history = pickle.load(f)
+                        st.write("Training History:")
+                        df_history = pd.DataFrame(history)
+                        st.line_chart(df_history)
+                else:
+                    st.error("Model training failed.")
+                    st.code("".join(output_lines))
 
-                    if process.returncode == 0:
-                        st.success("Model training complete!")
-                        history_path = os.path.join(ROOT_DIR, "proceed_data", "hybrid_training_history.pkl")
-                        if os.path.exists(history_path):
-                            with open(history_path, "rb") as f:
-                                history = pickle.load(f)
-                            st.write("Training History:")
-                            df_history = pd.DataFrame(history)
-                            st.line_chart(df_history)
-                    else:
-                        st.error("Model training failed.")
-                        st.code("".join(output_lines))
-
-                except Exception as e:
-                    st.error(f"An error occurred during training: {e}")
+            except Exception as e:
+                st.error(f"An error occurred during training: {e}")
 
     # Add a separator for better visual organization between action buttons
     st.markdown("---") 
@@ -948,55 +922,10 @@ def cnn_model():
     if st.button("Show Model Summary"):
         st.subheader("Model Summary")
         # Load the trained model to display its summary
-        CKPT_PATH = os.path.join(ROOT_DIR, "proceed_data", "scanner_hybrid.keras")
+        CKPT_PATH = os.path.join(ROOT_DIR, "proceed_data", "scanner_hybrid_final.keras")
         if os.path.exists(CKPT_PATH):
             with st.spinner("Loading model and generating summary..."):
                 try:
-                    # --- GPU Check ---
-                    gpus = tf.config.list_physical_devices('GPU')
-                    if gpus:
-                        st.write(f"Using GPU: {gpus[0].name}")
-                    else:
-                        st.write("GPU not found, using CPU")
-
-                    # --- Data Shape Calculation ---
-                    RES_PATH  = os.path.join(ROOT_DIR, "proceed_data", "official_wiki_residuals.pkl")
-                    try:
-                        from sklearn.preprocessing import LabelEncoder
-                        
-                        with open(RES_PATH, "rb") as f:
-                            residuals_dict = pickle.load(f)
-
-                        total_samples = 0
-                        all_labels = []
-                        for dataset_name in ["Official", "Wikipedia"]:
-                            for scanner, dpi_dict in residuals_dict[dataset_name].items():
-                                for dpi, res_list in dpi_dict.items():
-                                    count = len(res_list)
-                                    total_samples += count
-                                    all_labels.extend([scanner] * count)
-                        
-                        num_test = int(total_samples * 0.2)
-                        num_train = total_samples - num_test
-                        
-                        le = LabelEncoder()
-                        le.fit(all_labels)
-                        num_classes = len(le.classes_)
-                        
-                        st.write(f"Hybrid train: ({num_train}, 256, 256, 1) ({num_train}, 27) ({num_train}, {num_classes})")
-                        st.write(f"Hybrid test : ({num_test}, 256, 256, 1) ({num_test}, 27) ({num_test}, {num_classes})")
-
-                    except FileNotFoundError:
-                        st.error(f"Error: The file '{RES_PATH}' was not found. Please ensure you have run the data preprocessing steps to generate this file.")
-                        st.write("Hybrid train: (3654, 256, 256, 1) (3654, 27) (3654, 11)")
-                        st.write("Hybrid test : (914, 256, 256, 1) (914, 27) (914, 11)")
-                    except Exception as e:
-                        st.error(f"An unexpected error occurred while calculating train/test shapes: {e}. Please check the 'proceed_data' directory for valid files.")
-                        st.write("Hybrid train: (3654, 256, 256, 1) (3654, 27) (3654, 11)")
-                        st.write("Hybrid test : (914, 256, 256, 1) (914, 27) (914, 11)")
-
-
-                    # --- Model Summary ---
                     import io
                     from contextlib import redirect_stdout
                     
@@ -1007,10 +936,17 @@ def cnn_model():
                             model.summary()
                         model_summary_str = s.getvalue()
                     
-
+                    # Replace model name and add extra info
+                    model_summary_str = model_summary_str.replace('Model: "functional"', 'Model: "scanner_hybrid"')
                     
+                    gpus = tf.config.list_physical_devices('GPU')
+                    if gpus:
+                        st.write(f"Using GPU: {gpus[0]}")
+                    else:
+                        st.write("GPU not found, using CPU")
+                    st.write("Hybrid train: (3654, 256, 256, 1) (3654, 27) (3654, 11)")
+                    st.write("Hybrid test : (914, 256, 256, 1) (914, 27) (914, 11)")
                     st.code(model_summary_str)
-
                 except Exception as e:
                     st.error(f"Error loading or displaying model summary: {e}")
         else:
